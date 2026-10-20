@@ -1,6 +1,8 @@
 # 报告模板
 
-出报告时阅读。董事、股东只写姓名、职务和任职日期，不写出生年月、国籍、居住国等个人信息。评级、分数和未获取清单直接取 `scripts/risk_score.py` 的输出。交付前逐项勾选报告末尾的"交付自检"，并运行 `scripts/report_check.py`。
+出报告时阅读。董事、股东只写姓名、职务和任职日期，不写出生年月、国籍、居住国等个人信息。评级、分数和未获取清单直接取 `scripts/risk_score.py` 的输出。交付前逐项勾选报告末尾的"交付自检"，并运行 `scripts/report_check.py`。询盘核验各项的查法见 `inquiry-checks.md`。
+
+v1.5.0 起报告必须有"询盘核验"（企业主体）和"建议动作"两节，`report_check.py` 会检查。建议动作按优先级排序，每条标注预计耗时。
 
 ## 快速筛查简报
 
@@ -12,6 +14,7 @@
 | 主体类型 | 企业 / 个人买家 / 冒充嫌疑 |
 | 国家/地区 | |
 | 筛查日期 | YYYY-MM-DD |
+| 数据截止日期 | YYYY-MM-DD（海关、招聘、社媒等动态数据同步到哪一天） |
 | 评级 | 🟢 / 🟡 / 🔴（快筛为定性评级） |
 | 品类准入 | 可交易 / 需文件 / 不可交易（trade_blocker） |
 
@@ -23,6 +26,27 @@
 - 注册号 / 成立日期 / 注册地址：
 - VAT/EORI（欧盟/英国客户）：
 - 同名排除依据：
+
+## 询盘核验
+| 项目 | 结果 |
+|---|---|
+| 发件人 | [姓名、职位、是否在职、有无采购权；附来源] |
+| 公开采购负责人 | [姓名/职位，用于交叉核实；没有就写"未获取"] |
+| 电话 | [总机 / 直线 / 手机三类分别写：区号归属、是否与公司所在地一致、来源] |
+| 邮件头与 DMARC | [DMARC 策略；SPF/DKIM 结果与签名域名；Reply-To] |
+| 邮箱命名规则 | [符合 / 不符合 / 未获取（只作佐证）] |
+| 签约主体 | [法定实体全称；与对外品牌是否一致（DBA / trading as）；EIN、DUNS 或 VAT] |
+
+## 需求匹配
+| 对照 | 结果 |
+|---|---|
+| 询盘品类 × 我方能力 | [匹配 / 部分匹配 / 错配] |
+| 询盘品类 × 对方主营 | |
+| 询盘品类 × 对方历史进口 | [有同类记录 / 新品类 / 未获取] |
+| 询盘文本特征 | [个性化 / 群发式（调低转化预期，不算风险）] |
+
+## 进口记录摘要（有海关数据时）
+[粘贴 `customs_summary.py --md` 的输出：票数、最近一票、月均 TEU、规模分档、供应国占比、预计下次采购窗口（推断）]
 
 ## 制裁与出口管制（筛查日期 YYYY-MM-DD）
 | 名单 | 结果 |
@@ -43,6 +67,15 @@
 ## 风险信号与未获取项
 - 
 - 未获取：[填写；查不到的写"暂未检索到公开信源"]
+- 数据冲突：[两个来源数字不一致时，两个都列出，写明采用哪个、为什么；没有就写"无"]
+
+## 建议动作（按优先级）
+| # | 动作 | 预计耗时 | 目的 |
+|---|---|---|---|
+| 1 | [动作，例如：请对方转发原始邮件头] | [5 分钟] | [结案发件真实性] |
+| 2 | [动作，例如：回拨官网总机确认发件人在职] | [10 分钟] | |
+| 3 | [动作，例如：首次回复先澄清需求和签约主体，不报价] | [15 分钟] | |
+- 付款建议：[付款方式；合同 / PO 抬头核准为法定实体全称；首单规模上限]
 
 ## 留痕
 - 制裁筛查结果表：screening_log.csv
@@ -54,6 +87,8 @@
 - [ ] 制裁筛查写明日期和名称变体，screening_log.csv 已保存
 - [ ] 评级取自 risk_score.py 的输出（快筛为定性评级），付款建议与评级一致
 - [ ] 已用 dd_ledger.py add 记入台账，回写字段已填写
+- [ ] 询盘核验已填写发件人和签约主体（个人买家除外）；数据冲突已说明
+- [ ] 建议动作按优先级排序并标注耗时
 - [ ] 已运行 `python3 scripts/report_check.py <本报告>`，结论为"可以交付"
 
 ## 回写字段
@@ -65,7 +100,7 @@ dd_mode=quick, dd_rating=, dd_score=, dd_date=, dd_blockers=, dd_next_review=
 ```markdown
 # 客户背景调查报告：[公司全称]
 
-- 主体类型：企业 / 冒充嫌疑 | 国家/地区： | 客户类型： | 调查日期：YYYY-MM-DD | 模式：深度尽调
+- 主体类型：企业 / 冒充嫌疑 | 国家/地区： | 客户类型： | 调查日期：YYYY-MM-DD | 数据截止日期：YYYY-MM-DD | 模式：深度尽调
 - 评级：🟢/🟡/🔴 | 风险分：X/100 | 置信度：正常/低（信息不足） | 权重方案：default / project_b2b / ecommerce / custom（非默认时写明理由）
 - 一票否决项：无 / [列出]
 - 品类准入：可交易 / 需文件 / 不可交易
@@ -80,13 +115,15 @@ dd_mode=quick, dd_rating=, dd_score=, dd_date=, dd_blockers=, dd_next_review=
 
 ## 风险预警（如有）
 
-## 一、企业身份核验
+## 一、企业身份核验（含签约主体：法定实体 vs 对外品牌、EIN / DUNS / VAT）
+## 一B、询盘核验（表格同快筛：发件人、公开采购负责人、电话、邮件头与 DMARC、邮箱命名规则、签约主体）
 ## 二、股权结构与受益所有人
 ## 三、财务与信用
 ## 四、司法与诉讼
 ## 五、制裁与合规（筛查日期 YYYY-MM-DD；写明所用名称变体；附 screen_prep.py 的 CSV 结果表 screening_log.csv）
 ## 六、经营与行业
-## 六B、交易真实性（终端/中间商、项目真实性、采购阶段、现有供应商、认证核验）
+## 六B、交易真实性（终端/中间商、项目真实性、采购阶段、现有供应商、认证核验；需求匹配表；询盘文本特征）
+## 六C、进口记录量化（粘贴 customs_summary.py --md 输出；写明规模分档和首单规模建议）
 ## 七、数字化存在与一致性
 ## 八、贸易物流与品类准入
 （每节写：发现 + 来源 URL + 访问日期；推断内容标注"推断"）
@@ -100,9 +137,15 @@ dd_mode=quick, dd_rating=, dd_score=, dd_date=, dd_blockers=, dd_next_review=
 ## 未获取信息
 - 未获取：[填写脚本输出的 missing 列表；查不到的写"暂未检索到公开信源"]
 - 需要客户补充的材料：
+- 数据冲突：[两个来源数字不一致时，两个都列出，写明采用哪个、为什么；没有就写"无"]
 
-## 建议行动
+## 建议动作（按优先级）
+| # | 动作 | 预计耗时 | 目的 |
+|---|---|---|---|
+| 1 | [动作] | [耗时] | |
 - 付款方式：
+- 合同 / PO 抬头：[法定实体全称]
+- 首单规模上限：
 - 信用保险：
 - 需客户补充的文件：
 - 复查时间：
@@ -123,6 +166,8 @@ dd_mode=quick, dd_rating=, dd_score=, dd_date=, dd_blockers=, dd_next_review=
 - [ ] 制裁筛查写明日期和名称变体，screening_log.csv 已保存
 - [ ] 评级取自 risk_score.py 的输出（快筛为定性评级），付款建议与评级一致
 - [ ] 已用 dd_ledger.py add 记入台账，回写字段已填写
+- [ ] 询盘核验已填写发件人和签约主体；数据冲突已说明
+- [ ] 建议动作按优先级排序并标注耗时
 - [ ] 已运行 `python3 scripts/report_check.py <本报告>`，结论为"可以交付"
 
 ## 回写字段
@@ -130,4 +175,27 @@ dd_mode=deep, dd_rating=, dd_score=, dd_date=, dd_blockers=, dd_next_review=
 
 ## 免责声明
 本报告基于公开信息整理，不构成法律意见或投资建议。制裁筛查结果仅代表筛查当日状态。
+```
+
+## 首次回复草稿（澄清代替报价）
+
+身份未完全证实、需求有错配或量级不明时使用。只确认收到、说明能力边界、索要关键信息；不发报价单和完整产品册。按对方国家习惯改称呼；不编造对方公司的任何事实。
+
+```text
+Subject: Re: [对方原主题]
+
+Hi [对方名字],
+
+Thanks for reaching out. Before we put together pricing, could you help us with a few details?
+
+1. Product: which items are you looking for — [我方实际做的品类，例如 finished products or materials only]? Any reference photos or specs?
+2. Quantity: rough volume per style or per order, and expected annual volume.
+3. Timeline: target delivery date and destination port.
+4. Company details: the legal entity name for the PO, plus your [EIN / VAT / company registration number].
+
+For context, we [一句话写我方能力边界，例如 manufacture X; we don't produce Y]. If your project fits, we'll come back with a quotation within [N] business days.
+
+Best regards,
+[我方姓名]
+[职位 | 公司 | 官网]
 ```

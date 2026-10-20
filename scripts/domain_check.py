@@ -6,12 +6,22 @@
   1. 形似度：发件域名与官方域名是否只差 1-2 个字符或用了易混字符（rn/m、l/1、0/o）
   2. 域名年龄：RDAP 注册日期，新域名配老公司是强信号
   3. 免费邮箱：自称公司却用 Gmail/Outlook/Proton 等
-另查 MX、DMARC 作参考。DNS 查询优先走 HTTPS（DoH），失败再走 UDP；
+另查 MX、DMARC 策略作参考。DNS 查询优先走 HTTPS（DoH），失败再走 UDP；
 查不到时报告"未获取"，不会误判为"域名不存在"。
+
+v1.5.0 起还能做三件事（都可离线）：
+  4. 邮件头：--auth-results 读用户贴来的 Authentication-Results / Reply-To 行，
+     判断 SPF/DKIM 是否通过、DKIM 签名域名是否就是发件域名
+  5. DMARC 策略：p=none（只监控）或未设置时提示"仍可被伪造，必须看邮件头"
+  6. 命名规则：--sender-name + --pattern-samples 判断发件地址是否符合公司公开邮箱的格式
+     （只用来佐证，不用来推测别人的邮箱）
 
 用法:
     python3 scripts/domain_check.py --sender sales@example-co.com --official example.com
     python3 scripts/domain_check.py --sender buyer@gmail.com --claimed-since 2005
+    python3 scripts/domain_check.py --sender a@x.com --auth-results header.txt   # 邮件头判定
+    python3 scripts/domain_check.py --sender jlee@x.com --sender-name "Jim Lee" \
+        --pattern-samples "Ann Park:apark@x.com;Tom Hill:thill@x.com"           # 命名规则
     python3 scripts/domain_check.py --json input.json      # [{"sender": "...", "official": "...", "claimed_since": 2010}]
     python3 scripts/domain_check.py --selftest             # 离线逻辑自测
 只做公开查询：不发邮件、不连业务系统、不写盘。
@@ -145,13 +155,102 @@ def assess(sender_domain, official, claimed_since, facts, today=None):
         signals.append(("ℹ️", "MX 未获取（网络限制），不作判断"))
     elif not mx and not is_free:
         signals.append(("ℹ️", "该域名无 MX，可能用其他域名收信；单独这一点不算风险"))
-    if facts.get("dmarc") is False and not is_free:
-        signals.append(("ℹ️", "未设 DMARC：该域名更容易被伪造发件人，留意邮件头里的实际发件服务器"))
+    pol = facts.get("dmarc_policy")
+    if (facts.get("dmarc") is False or pol == "unset") and not is_free:
+        signals.append(("ℹ️", "未设 DMARC：该域名更容易被伪造发件人，必须看原始邮件头（--auth-results）才能结案"))
+    elif pol == "none" and not is_free:
+        signals.append(("ℹ️", "DMARC 为 p=none（只监控不拦截）：仍可被伪造，结论最多写\"极可能来自公司邮箱\"，结案需看邮件头"))
 
     return {"sender_domain": sender_domain, "official_domain": official or "",
             "freemail": is_free, "lookalike": look, "created": created, "age_days": age_days,
-            "mx": mx, "dmarc": facts.get("dmarc"), "level": level,
+            "mx": mx, "dmarc": facts.get("dmarc"), "dmarc_policy": pol, "level": level,
             "signals": [f"{s} {t}" for s, t in signals]}
+
+
+NICK = {"jim": "james", "jimmy": "james", "bob": "robert", "rob": "robert", "bill": "william",
+        "will": "william", "mike": "michael", "tom": "thomas", "dave": "david", "dan": "daniel",
+        "chris": "christopher", "steve": "steven", "joe": "joseph", "tony": "anthony", "liz": "elizabeth",
+        "kate": "katherine", "sam": "samuel", "alex": "alexander", "nick": "nicholas", "matt": "matthew"}
+
+
+def _clean(n):
+    import unicodedata
+    n = unicodedata.normalize("NFKD", n or "")
+    return "".join(c for c in n if c.isalpha()).lower()
+
+
+def pattern_names(first, last, local):
+    """返回 local（邮箱 @ 前部分）符合的命名格式列表。"""
+    f, l = _clean(first), _clean(last)
+    local = (local or "").lower()
+    if not f or not l:
+        return []
+    fs = {f, NICK.get(f, f)}
+    out = []
+    for fn in fs:
+        cand = {
+            "first.last": f"{fn}.{l}", "firstlast": f"{fn}{l}", "first_last": f"{fn}_{l}",
+            "flast": f"{fn[0]}{l}", "f.last": f"{fn[0]}.{l}", "first": fn, "last": l,
+            "lastf": f"{l}{fn[0]}", "last.first": f"{l}.{fn}", "firstl": f"{fn}{l[0]}", "first.l": f"{fn}.{l[0]}",
+        }
+        out += [k for k, v in cand.items() if v == local and k not in out]
+    return out
+
+
+def pattern_check(sender, sender_name, samples):
+    """samples: [(姓名, 邮箱), ...]；返回 (符号, 说明, 主流格式)。"""
+    from collections import Counter
+    cnt = Counter()
+    for name, mail in samples:
+        parts = (name or "").split()
+        if len(parts) < 2 or "@" not in mail:
+            continue
+        for p in pattern_names(parts[0], parts[-1], mail.split("@")[0]):
+            cnt[p] += 1
+    if not cnt:
+        return "ℹ️", "命名规则未获取：样本不足或无法识别格式", None
+    top, n = cnt.most_common(1)[0]
+    parts = (sender_name or "").split()
+    if len(parts) < 2:
+        return "ℹ️", f"公司公开邮箱主要格式为 {top}（{n} 个样本）；未提供发件人姓名，无法比对", top
+    mine = pattern_names(parts[0], parts[-1], sender.split("@")[0])
+    if top in mine:
+        return "✅", f"发件地址符合公司公开邮箱格式 {top}（{n} 个样本），佐证为内部账号", top
+    return "ℹ️", f"发件地址不符合公司公开邮箱格式 {top}（{n} 个样本）；只记录，不单独判风险", top
+
+
+def parse_auth_results(text, sender_domain):
+    """解析用户贴来的原始邮件头片段，返回 {spf, dkim, dmarc, dkim_domain, reply_to, level, signals}。"""
+    import re
+    low = (text or "").lower()
+    def res(key):
+        m = re.search(key + r"\s*=\s*([a-z]+)", low)
+        return m.group(1) if m else None
+    spf, dkim, dmarc = res(r"\bspf"), res(r"\bdkim"), res(r"\bdmarc")
+    m = re.search(r"header\.(?:d|i)\s*=\s*@?([a-z0-9.-]+)", low)
+    dkim_domain = m.group(1) if m else None
+    m = re.search(r"^reply-to:.*?([a-z0-9._%+-]+@[a-z0-9.-]+)", low, re.M)
+    reply_to = m.group(1) if m else None
+    sd = registrable(domain_of(sender_domain))
+    aligned = bool(dkim_domain) and registrable(dkim_domain) == sd
+    signals, level = [], "🟡"
+    if dmarc == "pass" or (dkim == "pass" and aligned):
+        level = "🟢"
+        signals.append("✅ 邮件头通过：" + ("DMARC=pass" if dmarc == "pass" else f"DKIM=pass 且签名域名 {dkim_domain} 与发件域名一致") + "，发件真实性可以结案")
+    elif spf == "fail" and dkim in ("fail", None) or dmarc == "fail":
+        level = "🔴"
+        signals.append(f"🔴 邮件头未通过（SPF={spf}, DKIM={dkim}, DMARC={dmarc}）：冒充信号，用官方总机回拨核实")
+    elif dkim == "pass" and not aligned:
+        signals.append(f"🟡 DKIM 通过但签名域名 {dkim_domain} 不是发件域名 {sd}：可能是代发平台，需进一步核实")
+    elif spf == "pass":
+        signals.append("🟡 只有 SPF 通过、没有对齐的 DKIM：可信度一般，结合回拨判断")
+    else:
+        signals.append("ℹ️ 邮件头里没找到可判断的 SPF/DKIM/DMARC 结果，请贴完整的 Authentication-Results 行")
+    if reply_to and registrable(domain_of(reply_to)) != sd:
+        level = "🔴" if level != "🟢" else "🟡"
+        signals.append(f"🔴 Reply-To 指向其他域名（{reply_to}）：回复会被转走，典型冒充手法")
+    return {"spf": spf, "dkim": dkim, "dmarc": dmarc, "dkim_domain": dkim_domain,
+            "reply_to": reply_to, "aligned": aligned, "level": level, "signals": signals}
 
 
 # ---------- 网络查询 ----------
@@ -206,11 +305,21 @@ def mx_records(domain):
     return r if r is not None else _udp_mx(domain)
 
 
-def has_dmarc(domain):
+def dmarc_info(domain):
+    """返回 (是否设置 DMARC, 策略 none/quarantine/reject/unset/None)。None 表示未获取。"""
+    import re
     r = _doh("_dmarc." + domain, "TXT")
     if r is None:
-        return None
-    return any("v=DMARC1" in x for x in r)
+        return None, None
+    recs = [x for x in r if "v=dmarc1" in x.lower()]
+    if not recs:
+        return False, "unset"
+    m = re.search(r"\bp\s*=\s*(none|quarantine|reject)", recs[0].lower())
+    return True, (m.group(1) if m else "none")
+
+
+def has_dmarc(domain):
+    return dmarc_info(domain)[0]
 
 
 def rdap_created(domain):
@@ -230,7 +339,8 @@ def check(sender, official=None, claimed_since=None):
     if registrable(sd) in FREEMAIL:
         facts = {"mx": ["(免费邮箱服务)"], "dmarc": None, "created": None}
     else:
-        facts = {"mx": mx_records(sd), "dmarc": has_dmarc(sd), "created": rdap_created(sd)}
+        dm, pol = dmarc_info(sd)
+        facts = {"mx": mx_records(sd), "dmarc": dm, "dmarc_policy": pol, "created": rdap_created(sd)}
     r = assess(sd, od, claimed_since, facts)
     if od and registrable(od) != registrable(sd):
         oc = rdap_created(od)
@@ -262,6 +372,26 @@ def selftest():
         ok = r["level"] == want
         fails += not ok
         print(("PASS " if ok else "FAIL ") + f"{name} -> {r['level']}")
+    r = assess("brandx.com", "brandx.com", None, {"mx": ["x"], "dmarc": True, "dmarc_policy": "none", "created": "2001-01-01"}, T)
+    extra = [
+        ("DMARC p=none → 提示看邮件头", any("p=none" in s for s in r["signals"]) and r["level"] == "🟢"),
+    ]
+    good = "Authentication-Results: mx.example; spf=pass smtp.mailfrom=brandx.com; dkim=pass header.d=brandx.com; dmarc=pass"
+    extra.append(("邮件头全部通过 → 可结案", parse_auth_results(good, "a@brandx.com")["level"] == "🟢"))
+    bad = "Authentication-Results: mx; spf=fail smtp.mailfrom=brandx.com; dkim=fail header.d=brandx.com"
+    extra.append(("SPF+DKIM 都 fail → 红", parse_auth_results(bad, "a@brandx.com")["level"] == "🔴"))
+    rt = good + "\nReply-To: Pay Dept <billing@brandx-pay.com>"
+    extra.append(("Reply-To 指向别的域名 → 降级并报警", any("Reply-To" in s for s in parse_auth_results(rt, "a@brandx.com")["signals"])
+                  and parse_auth_results(rt, "a@brandx.com")["level"] != "🟢"))
+    na = "Authentication-Results: mx; spf=pass; dkim=pass header.d=mailer-platform.com"
+    extra.append(("DKIM 签名域名不一致 → 黄", parse_auth_results(na, "a@brandx.com")["level"] == "🟡"))
+    smp = [("Ann Park", "apark@brandx.com"), ("Tom Hill", "thill@brandx.com"), ("Lea Wong", "lwong@brandx.com")]
+    extra.append(("命名规则吻合（Jim 视同 James）", pattern_check("jlee@brandx.com", "Jim Lee", smp)[0] == "✅"))
+    extra.append(("命名规则不符 → 只记录", pattern_check("jim.lee@brandx.com", "Jim Lee", smp)[0] == "ℹ️"))
+    extra.append(("样本不足 → 未获取", pattern_check("x@brandx.com", "Jim Lee", [])[2] is None))
+    for name, ok in extra:
+        fails += not ok
+        print(("PASS " if ok else "FAIL ") + name)
     print("\n全部通过" if not fails else f"\n{fails} 项失败")
     return fails
 
@@ -272,6 +402,10 @@ def main():
     ap.add_argument("--official", help="声称公司的官方域名（从官网或登记信息确认）")
     ap.add_argument("--claimed-since", type=int, help="对方自称的成立年份")
     ap.add_argument("--json", help="批量输入 JSON 文件")
+    ap.add_argument("--auth-results", help="原始邮件头片段文件（Authentication-Results、Reply-To 行）")
+    ap.add_argument("--sender-name", help="发件人姓名，用于命名规则比对")
+    ap.add_argument("--pattern-samples", help="公司公开邮箱样本：\"姓名:邮箱;姓名:邮箱\"")
+    ap.add_argument("--offline", action="store_true", help="不做 DNS/RDAP 查询，只跑邮件头和命名规则")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -281,7 +415,18 @@ def main():
             items = json.load(f)
         out = [check(i.get("sender", ""), i.get("official"), i.get("claimed_since")) for i in items]
     elif a.sender:
-        out = check(a.sender, a.official, a.claimed_since)
+        out = {"sender_domain": domain_of(a.sender)} if a.offline else check(a.sender, a.official, a.claimed_since)
+        if a.auth_results:
+            with open(a.auth_results, encoding="utf-8", errors="ignore") as f:
+                out["auth_results"] = parse_auth_results(f.read(), a.sender)
+        if a.pattern_samples:
+            smp = []
+            for item in a.pattern_samples.split(";"):
+                if ":" in item:
+                    n, m = item.split(":", 1)
+                    smp.append((n.strip(), m.strip()))
+            sym, note, top = pattern_check(a.sender, a.sender_name, smp)
+            out["naming_pattern"] = {"result": sym, "pattern": top, "note": note}
     else:
         ap.print_help()
         sys.exit(2)

@@ -12,6 +12,8 @@
   4 制裁筛查  写明筛查日期，并保留筛查结果表（screening_log.csv）
   5 评级付款  评级为 🟢/🟡/🔴 之一，并给出付款方式建议
   6 台账      写明已用 dd_ledger.py 记录，回写字段 dd_rating 已填写
+  7 询盘核验  企业主体："发件人"和"签约主体"两行已填写（个人买家跳过）
+  8 建议动作  有"建议动作"一节，且至少一条
 深调另查：风险分为 0–100 的数字。
 
 脚本只能检查格式和留痕。"没有编造人名、网址、电话"这一项必须由人工逐条核对来源。
@@ -29,6 +31,9 @@ PLACEHOLDERS = [
     (r"🟢 / 🟡 / 🔴", "未选定的评级"),
     (r"🟢/🟡/🔴", "未选定的评级"),
     (r"✅存续 / ⚠️异常 / ❌未查到", "未选定的登记状态"),
+    (r"\[姓名", "[姓名…]"),
+    (r"\[法定实体", "[法定实体…]"),
+    (r"\[动作", "[动作…]"),
 ]
 PAY_WORDS = ["定金", "T/T", "信用证", "正常合作", "暂停", "账期", "出口信用保险"]
 
@@ -59,6 +64,19 @@ def check(text, mode=None):
     filled = bool(re.search(r"dd_rating=(green|yellow|red|🟢|🟡|🔴)", text))
     res.append(("台账", ledger and filled,
                 ("台账" + ("✓" if ledger else "✗")) + " / " + ("dd_rating" + ("✓" if filled else "✗"))))
+    personal = bool(re.search(r"主体类型[^\n]{0,6}个人买家", text))
+    if personal:
+        res.append(("询盘核验", True, "个人买家，跳过"))
+    else:
+        def filled(label):
+            m = re.search(label + r"[^\n|]*[|：:]\s*([^\n|]+)", text)
+            return bool(m) and m.group(1).strip() not in ("", "-", "—")
+        snd, ent = filled("发件人"), filled("签约主体")
+        res.append(("询盘核验", snd and ent,
+                    ("发件人" + ("✓" if snd else "✗")) + " / " + ("签约主体" + ("✓" if ent else "✗"))))
+    m = re.search(r"#+\s*建议动作[^\n]*\n(.*?)(?=\n#+\s|\Z)", text, re.S)
+    acts = len(re.findall(r"^\s*(?:\d+[.、]|[-*]|\|\s*\d)", m.group(1), re.M)) if m else 0
+    res.append(("建议动作", acts >= 1, f"{acts} 条" if m else "缺少\"建议动作\"一节"))
     if mode == "deep":
         sc = re.search(r"风险分[：:]\s*(\d{1,3})\s*/\s*100", text)
         ok = bool(sc) and 0 <= int(sc.group(1)) <= 100
@@ -84,6 +102,9 @@ GOOD_QUICK = """# 客户快速筛查简报：Demo Trading Ltd
 可以报价，按 30% 定金 + 70% 见提单副本。
 ## 身份核验
 - 登记状态：✅存续（https://find-and-update.company-information.service.gov.uk/company/00000000）
+## 询盘核验
+- 发件人：Ann Park，采购经理，官网团队页可见
+- 签约主体：Demo Trading Ltd（与对外品牌一致）
 ## 制裁与出口管制（筛查日期 2026-10-19）
 - CSL 未命中 https://www.trade.gov/consolidated-screening-list
 - OpenSanctions 未命中 https://www.opensanctions.org/
@@ -92,6 +113,8 @@ GOOD_QUICK = """# 客户快速筛查简报：Demo Trading Ltd
 ## 留痕
 - 制裁筛查结果表：screening_log.csv
 - 台账：已用 dd_ledger.py add 记录
+## 建议动作
+1. 回拨官网总机确认 Ann Park 在职（5 分钟）
 ## 回写字段
 dd_mode=quick, dd_rating=green
 """
@@ -117,6 +140,13 @@ def selftest():
     cases.append(("完整深调通过", m == "deep" and all(ok for _, ok, _ in r)))
     m, r = check(deep.replace("风险分：42/100", "风险分：待定"))
     cases.append(("深调缺风险分 → FAIL", not dict((n, ok) for n, ok, _ in r)["风险分"]))
+    _, r = check(GOOD_QUICK.replace("- 签约主体：Demo Trading Ltd（与对外品牌一致）\n", ""))
+    cases.append(("企业缺签约主体 → FAIL", not dict((n, ok) for n, ok, _ in r)["询盘核验"]))
+    _, r = check(GOOD_QUICK.replace("- 发件人：Ann Park，采购经理，官网团队页可见\n", "").replace(
+        "- 签约主体：Demo Trading Ltd（与对外品牌一致）\n", "") + "\n| 主体类型 | 个人买家 |")
+    cases.append(("个人买家跳过询盘核验", dict((n, ok) for n, ok, _ in r)["询盘核验"]))
+    _, r = check(GOOD_QUICK.replace("## 建议动作\n1. 回拨官网总机确认 Ann Park 在职（5 分钟）\n", ""))
+    cases.append(("缺建议动作 → FAIL", not dict((n, ok) for n, ok, _ in r)["建议动作"]))
     fails = 0
     for name, ok in cases:
         print(("PASS " if ok else "FAIL ") + name)

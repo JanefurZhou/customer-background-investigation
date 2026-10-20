@@ -14,6 +14,17 @@
 | 需要升级为深调的金额 | [填写，如 USD 10,000] | 超过这个金额自动建议深调 |
 | 默认复查周期 | [填写，如 90 天] | 对应 `dd_ledger.py add --review-days`；🔴 客户固定不超过 30 天 |
 
+## 2B. 填写我方能力边界
+需求匹配（`references/inquiry-checks.md` 第 4 节）和首次回复草稿会用到这张表：
+
+| 项目 | 你的设定 |
+|---|---|
+| 主营产品 | [填写，如：面料 / 成品 / 两者都做] |
+| 最小起订量（MOQ） | [填写] |
+| 不做的品类或工艺 | [填写，如：不做成品缝制、不做某类认证产品] |
+| 常规交期 | [填写] |
+| 首次回复里的一句话能力说明（英文） | [填写，如：We manufacture X; we don't produce Y.] |
+
 ## 3. 选择评分权重
 运行 `python3 scripts/risk_score.py --presets` 查看预设：
 - `default`：通用外贸
@@ -24,7 +35,7 @@
 
 ## 4. 行业插件
 - 已有插件：`references/industry/fur-trade.md`（皮草、仿皮草、动物纤维）、`references/industry/project-b2b.md`（建材、工程、设备）。
-- 其他行业：复制 `references/industry/_template.md` 新建插件，并在 `SKILL.md` 第二步第 6 条加一行引用。
+- 其他行业：复制 `references/industry/_template.md` 新建插件，并在 `SKILL.md` 第二步第 7 条加一行引用。
 
 ## 5. 安装
 把 `customer-background-investigation/` 整个文件夹放进你所用 AI 助手的技能目录。在对话中说"背调""尽调""KYC""制裁筛查""这个客户靠谱吗""这个供应商可信吗"等即可触发。
@@ -32,11 +43,12 @@
 ## 6. 脚本（纯 Python 标准库，不需要安装任何依赖，也不需要 API Key）
 | 脚本 | 作用 | 自测 |
 |---|---|---|
-| `scripts/domain_check.py` | 识别仿冒邮箱和网站：看形似度、域名年龄、是否为免费邮箱 | `--selftest` |
+| `scripts/domain_check.py` | 识别仿冒邮箱和网站：看形似度、域名年龄、是否为免费邮箱；DMARC 策略、邮件头判定、邮箱命名规则 | `--selftest` |
 | `scripts/screen_prep.py` | 制裁筛查准备：生成名称变体（音译、后缀、西里尔字母转写）、检索清单和 CSV 结果表 | `--selftest` |
 | `scripts/risk_score.py` | 统一评分：支持预设权重和自定义权重，含一票否决规则 | `--selftest` |
 | `scripts/dd_ledger.py` | 背调台账：建档、历史对比、到期复查提醒 | `--selftest` |
-| `scripts/report_check.py` | 交付前自检：来源数量、残留占位符、未获取清单、筛查留痕、评级与付款、台账；任一项不过即不予交付 | `--selftest` |
+| `scripts/customs_summary.py` | 海关进口记录量化：票数、月均 TEU、规模分档、供应国与供应商占比、采购间隔、进口中断信号 | `--selftest` |
+| `scripts/report_check.py` | 交付前自检：来源数量、残留占位符、未获取清单、筛查留痕、评级与付款、台账、询盘核验、建议动作；任一项不过即不予交付 | `--selftest` |
 
 台账默认保存为当前目录下的 `dd_ledger.csv`，可以用 `--ledger` 指定其他路径。台账只追加记录，不覆盖历史。
 

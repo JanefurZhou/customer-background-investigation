@@ -12,6 +12,10 @@
 | 中国大陆关联主体 | https://www.gsxt.gov.cn | 国家企业信用信息公示系统；对方自称有中国母公司、办事处或采购代理时查（境外 IP 可能无法访问） |
 | 地图实景 | Google 地图街景、卫星图 | 地址是真实门店、仓库还是住宅、信箱、共享办公 |
 | 官方渠道回拨 | 对方官网或登记信息里的电话（不用邮件里给的号码） | 确认"这个人是不是这家公司的员工，这封询盘是不是他发的"——识别冒充最有效的免费办法 |
+| 发件人在职与职位 | LinkedIn 搜"姓名 + 公司名"（简称和全名都搜，如 Jim / James）；官网团队页、新闻稿、展会名册 | 是否在职、职位、有没有采购权；公司公开的采购负责人是谁，用来交叉核实 |
+| 电话归属 | 北美号码看区号和交换局（前 6 位），其他国家看国家码和区号；官网、登记、地图商家页比对总机 | 总机、直线、手机分别是否与公司所在地一致 |
+| 手机号反查 | Truecaller https://www.truecaller.com ，Spokeo、Whitepages 等人员信息聚合网站 | 对方主动提供的手机号登记在谁名下、哪个城市；标"聚合数据，可靠性中等"，报告只写到城市或区域 |
+| 签约主体 | 美国州务卿登记里的 DBA（Assumed Name）、邓白氏 DUNS 查询 https://www.dnb.com/duns/duns-lookup.html | 对外品牌背后的法定实体；合同和 PO 抬头用哪个名字 |
 
 ## 问题 2：谁在控制这家公司？
 
@@ -56,7 +60,9 @@
 |---|---|---|
 | 域名核验脚本 | `python3 scripts/domain_check.py --sender <邮箱> --official <官方域名>` | 形似域名、域名年龄、免费邮箱、MX、DMARC，一次输出结论 |
 | 证书透明日志 | https://crt.sh | 域名第一次申请 HTTPS 证书的时间，可以佐证网站真正上线的时间 |
-| 邮件头 | 让用户在邮箱里"显示原始邮件"，看 Reply-To 和 Authentication-Results | Reply-To 和发件地址不同、SPF/DKIM 显示 fail，都是冒充信号 |
+| 邮件头 | 让用户在邮箱里"显示原始邮件"，把 Authentication-Results 和 Reply-To 两行存成文件，运行 `domain_check.py --sender <邮箱> --auth-results <文件>` | SPF 或 DKIM 通过且签名域名就是公司域名 → 可以结案；Reply-To 和发件地址不同、SPF/DKIM 显示 fail，都是冒充信号 |
+| DMARC 策略 | 脚本输出的 `dmarc_policy`；手工复核用 https://mxtoolbox.com/dmarc.aspx | `reject`/`quarantine` 较难伪造；`none` 或未设置时仍可伪造，必须看邮件头 |
+| 邮箱命名规则 | 官网、新闻稿里 2 个以上公开员工邮箱；`domain_check.py --sender-name <姓名> --pattern-samples "姓名:邮箱;…"` | 发件地址是否符合公司格式，只作佐证，不用来推测别人的邮箱 |
 | DNS 工具 | https://mxtoolbox.com | 手工复核 MX、SPF、黑名单 |
 | 图片反查 | https://tineye.com ，https://lens.google | 官网或社媒上的门店照、团队照、产品图是不是盗用来的 |
 | Facebook 主页透明度 | https://www.facebook.com/ads/library ，或主页的"主页透明度"栏 | 主页创建日期、历史名称变更、管理员所在国家 |
